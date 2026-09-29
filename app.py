@@ -212,6 +212,7 @@ class QuotaFloat:
         self.messages = queue.Queue()
         self.snapshot = (None, None, None)
         self.visible = False
+        self.dismissed = False
         self.draw()
         self.root.after(100, self.tick)
 
@@ -248,8 +249,13 @@ class QuotaFloat:
         self.menu.add_command(label=f"可用重置卡：{'--' if cards is None else cards} 次", state="disabled")
         self.menu.add_separator()
         self.menu.add_command(label="立即刷新", command=self.refresh)
-        self.menu.add_command(label="退出悬浮窗", command=self.root.destroy)
+        self.menu.add_command(label="隐藏至宠物下次出现", command=self.dismiss)
         self.menu.tk_popup(event.x_root, event.y_root)
+
+    def dismiss(self):
+        self.dismissed = True
+        self.visible = False
+        self.root.withdraw()
 
     def refresh(self):
         if self.refreshing or not self.visible:
@@ -282,24 +288,25 @@ class QuotaFloat:
         return None
 
     def tick(self):
-        rect = self.pet_rect()
-        if rect is None:
-            if self.visible:
-                self.root.withdraw()
-                self.visible = False
-        else:
-            x, y = position_above_pet(rect)
-            if not self.visible:
-                self.root.geometry(f"{WIDTH}x{HEIGHT}+{x}+{y}")
-                self.root.deiconify()
-                self.root.lift()
-                self.visible = True
-            elif (self.root.winfo_x(), self.root.winfo_y()) != (x, y):
-                self.root.geometry(f"+{x}+{y}")
-                self.root.lift()
-        if self.visible and time.monotonic() - self.last_refresh >= REFRESH_SECONDS:
-            self.refresh()
         try:
+            rect = self.pet_rect()
+            if rect is None:
+                self.dismissed = False
+                if self.visible:
+                    self.root.withdraw()
+                    self.visible = False
+            elif not self.dismissed:
+                x, y = position_above_pet(rect)
+                if not self.visible:
+                    self.root.geometry(f"{WIDTH}x{HEIGHT}+{x}+{y}")
+                    self.root.deiconify()
+                    self.root.lift()
+                    self.visible = True
+                elif (self.root.winfo_x(), self.root.winfo_y()) != (x, y):
+                    self.root.geometry(f"+{x}+{y}")
+                    self.root.lift()
+            if self.visible and time.monotonic() - self.last_refresh >= REFRESH_SECONDS:
+                self.refresh()
             while True:
                 success, value = self.messages.get_nowait()
                 self.refreshing = False
@@ -309,7 +316,12 @@ class QuotaFloat:
                     self.draw()
         except queue.Empty:
             pass
-        self.root.after(120, self.tick)
+        except Exception:
+            self.pet_hwnd = self.pet_image = None
+            self.visible = False
+            self.root.withdraw()
+        finally:
+            self.root.after(250, self.tick)
 
 
 def main():

@@ -1,82 +1,73 @@
-# Codex 额度速览
+# Codex 宠物用量条
 
-一个随 Codex 桌面版出现的 Windows 用量悬浮窗。打开 Codex，就能直接看到 5 小时额度、一周额度和可用重置卡次数，不用反复进入用量页面。
+把 Codex 的用量放在桌面宠物头顶：两条线分别显示 **5 小时**和**一周**的剩余额度。用量条根据宠物图像的位置自动定位，宠物隐藏时也会隐藏；它本身没有自由拖动功能。
 
-> 这是独立制作的辅助工具，不是 OpenAI 官方产品，也不会修改 Codex 桌面程序。
+> 这是独立制作的 Windows 辅助工具，不是 OpenAI 官方产品，也不会修改 Codex 桌面程序。
 
-## 能看到什么
+## 界面与数据
 
-| 项目 | 显示内容 | 数据来源 |
-| --- | --- | --- |
-| 5 小时额度 | 剩余百分比、进度条、距离重置的时间 | 300 分钟用量窗口 |
-| 一周额度 | 剩余百分比、进度条、距离重置的时间 | 10,080 分钟用量窗口 |
-| 可用重置卡 | 可用次数 | `rateLimitResetCredits.availableCount` |
+| 界面 | 含义 |
+| --- | --- |
+| 青色线 · 5 小时 | 300 分钟窗口的剩余额度百分比 |
+| 黄色线 · 一周 | 10,080 分钟窗口的剩余额度百分比 |
 
-悬浮窗每 60 秒自动刷新，也可以点击右下角的“刷新”。关闭 Codex 窗口后，悬浮窗会隐藏；再次打开 Codex 时会出现。
+两条线每 60 秒自动更新。**右键点击用量条**可查看两个窗口的重置倒计时、可用重置卡次数，也可以手动刷新或退出。界面的“重置卡”是 Codex 返回的 *额度重置次数*，并非购买的通用 credits 余额。数据缺失时显示 `--`。
 
-**关于“重置卡”：**这里显示的是 Codex 返回的 *额度重置次数*，不是购买的通用 credits 余额。若服务没有提供某项数据，界面会显示 `--`，不会把未知值当作零。
+## 安装或从旧版升级
 
-## 快速安装
+**适用环境：**Windows 版 Codex 桌面应用，已开启并显示桌面宠物。已在 Windows 11 和 Codex 桌面版 `26.924.2738.0` 上验证。打包好的 `.exe` 无需管理员权限或 Python。
 
-**适用环境：**Windows 版 Codex 桌面应用；已在 Windows 11 和 Codex 桌面版 `26.924.2738.0` 上验证。运行打包好的程序无需安装 Python，也无需管理员权限。
-
-1. 下载本仓库的 ZIP，解压到任意文件夹。
-2. 在解压后的文件夹中打开 PowerShell，运行：
+1. 下载本仓库的 ZIP 并解压。
+2. 在解压后的文件夹打开 PowerShell，运行：
 
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\install.ps1
    ```
 
-3. 安装脚本会立即启动悬浮窗，并在当前用户的 Windows“启动”文件夹中创建快捷方式。以后登录 Windows，它会在后台等待 Codex 打开。
+安装脚本会关闭旧版用量窗、替换当前用户的安装文件、删除旧版留下的自由拖动位置记录，并立即启动新版。它还会在当前用户的 Windows“启动”文件夹中创建快捷方式。以后登录 Windows 后，程序会在后台等待宠物出现。
 
-安装位置为 `%LOCALAPPDATA%\CodexQuotaFloat`。安装脚本只为当前用户配置启动项，不会修改 Codex 安装目录。
+安装位置：`%LOCALAPPDATA%\CodexQuotaFloat`。如果宠物尚未显示，可在 Codex 中输入 `/pet`，或在 **设置 → Pets** 中显示宠物。选择 **Mini** 时没有宠物图像，用量条也不会出现。
 
-## 日常使用
+## 工作方式与隐私
 
-- **移动：**拖动标题栏；位置自动保存。
-- **临时隐藏：**点击右上角 `×`。下次关闭并重新打开 Codex 窗口时会再次显示。
-- **立即刷新：**点击右下角“刷新”，或右键选择“立即刷新”。
-- **退出：**右键选择“退出悬浮窗”。再次登录 Windows 后，后台程序会重新启动。
+- 程序通过 Windows 辅助功能接口读取桌面宠物图像的屏幕边界，并把用量条固定在其上方。拖动宠物后，用量条会根据图像的新位置重新定位。
+- 用量来自本机 Codex CLI 的 App Server 方法 `account/rateLimits/read`。剩余百分比按 `100 - usedPercent` 计算；倒计时来自 `resetsAt`。
+- 不需要输入 API Key；程序不读取、导出或保存登录令牌，也不保存用量历史或窗口位置。刷新时会短暂启动本机的 `codex app-server` 进程。
 
-## 数据与隐私
-
-程序调用本机 Codex CLI 的官方 App Server 方法 `account/rateLimits/read`。它使用你已经登录的 Codex 账号，不要求输入 API Key，也不会读取、导出或保存登录令牌。每次刷新时会短暂启动本机的 `codex app-server` 进程。
-
-剩余百分比按 `100 - usedPercent` 计算；倒计时使用服务返回的 `resetsAt`。程序只保存悬浮窗位置到 `%LOCALAPPDATA%\CodexQuotaFloat\position.json`，不保存用量历史。
-
-接口字段参考：[OpenAI Docs — Codex App Server 的 Rate limits](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt)。
+参考：[OpenAI Docs — Pets](https://learn.chatgpt.com/docs/pets) 和 [Codex App Server 的 Rate limits](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt)。
 
 ## 卸载
 
-在本仓库文件夹中运行：
+在本仓库文件夹运行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
 ```
 
-脚本会关闭悬浮窗、移除当前用户的启动快捷方式，并删除安装的程序和窗口位置文件。
+脚本会退出用量条、移除启动快捷方式，并删除当前用户安装的文件。
 
 ## 从源码运行或构建
 
-源码只有 `app.py`，使用 Python 标准库。需要 Windows、Python 3.10 或更新版本，以及可用的 Codex CLI。
+需要 Windows、Python 3.10 或更新版本，以及可用的 Codex CLI。
 
 ```powershell
+python -m pip install -r .\requirements.txt
 python .\app.py
 ```
 
-若要自行生成单文件 `.exe`：
+生成单文件 `.exe`：
 
 ```powershell
 python -m pip install pyinstaller
 python -m PyInstaller --onefile --windowed --name CodexQuotaFloat .\app.py
 ```
 
-生成文件位于 `dist\CodexQuotaFloat.exe`。
+构建结果位于 `dist\CodexQuotaFloat.exe`。第三方依赖许可见 [`licenses`](licenses)。
 
 ## 常见问题
 
-**显示 `--` 或读取失败？** 先确认 Codex 桌面版已登录，且它的 CLI 可用；然后点击“刷新”。如果 Codex 更新后调整了 App Server 返回字段，当前版本可能需要同步更新。
+**没有显示用量条？** 先确认桌面宠物正在显示，且未选中 Mini。程序只在检测到宠物图像时显示，不再单独浮在桌面其他位置。
 
-**为什么窗口没有显示？** 悬浮窗只在检测到 Windows Codex 桌面窗口时显示。如果刚点击过 `×`，关闭并重新打开 Codex 窗口即可。
+**显示 `--` 或读取失败？** 确认 Codex 已登录且本机 CLI 可用，然后右键点击用量条手动刷新。若 Codex 更新后改变了 App Server 或宠物窗口结构，程序可能需要适配。
 
-**为什么重置倒计时和百分比不是同一个数？** 百分比表示窗口内还剩多少额度；倒计时表示这段额度何时重置。两者是独立信息。
+**倒计时与百分比为何不同？** 百分比表示窗口内剩余用量；倒计时表示该窗口何时重置，两者是独立信息。

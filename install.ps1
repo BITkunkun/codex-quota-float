@@ -14,6 +14,7 @@ Get-Process CodexQuotaFloat -ErrorAction SilentlyContinue |
 
 New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 Copy-Item -LiteralPath $source -Destination $target -Force
+Remove-Item -LiteralPath (Join-Path $installDir 'position.json') -Force -ErrorAction SilentlyContinue
 
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($startup)
@@ -24,4 +25,4 @@ $shortcut.Save()
 
 Start-Process -FilePath $target
 Write-Host "已安装并启动：$target"
-Write-Host '下次登录 Windows 后会自动在后台等待 Codex 打开。'
+Write-Host '下次登录 Windows 后会自动在后台等待 Codex 桌面宠物出现。'

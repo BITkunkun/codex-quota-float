@@ -1,4 +1,4 @@
-"""Small Windows companion window for Codex account limits."""
+"""A two-line Codex quota indicator that follows the desktop pet."""
 
 import ctypes
 import ctypes.wintypes as wintypes
@@ -7,50 +7,74 @@ import os
 import queue
 import shutil
 import subprocess
-import sys
 import threading
 import time
 import tkinter as tk
-from datetime import datetime
 from pathlib import Path
 
-
-APP_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "CodexQuotaFloat"
-POSITION_FILE = APP_DIR / "position.json"
-BG = "#10151f"
-CARD = "#1b2330"
-TEXT = "#f5f7fb"
-MUTED = "#94a3b8"
-CYAN = "#55d6d1"
-AMBER = "#f5bd65"
-WIDTH, HEIGHT = 354, 340
+import uiautomation as auto
 
 
-def codex_window_open():
-    user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
-    found = False
+BG = "#111924"
+BORDER = "#344252"
+TRACK = "#3c4a5a"
+TEXT = "#eaf2f7"
+CYAN = "#5de1da"
+AMBER = "#ffc874"
+KEY = "#010203"
+WIDTH, HEIGHT = 236, 72
+REFRESH_SECONDS = 60
+user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+kernel32.OpenProcess.restype = wintypes.HANDLE
+kernel32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD,
+                                                wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+
+
+def pet_window_handles():
+    """Find the transparent Codex pet host, excluding the main app window."""
+    handles = []
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     def visit(hwnd, _):
-        nonlocal found
-        if not user32.IsWindowVisible(hwnd):
+        if not user32.IsWindowVisible(hwnd) or not user32.GetWindowLongPtrW(hwnd, -20) & 0x20:
             return True
         pid = wintypes.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        handle = kernel32.OpenProcess(0x1000, False, pid.value)
-        if not handle:
+        process = kernel32.OpenProcess(0x1000, False, pid.value)
+        if not process:
             return True
         try:
             path = ctypes.create_unicode_buffer(1024)
             length = wintypes.DWORD(len(path))
-            if kernel32.QueryFullProcessImageNameW(handle, 0, path, ctypes.byref(length)):
-                found = "OpenAI.Codex_" in path.value and path.value.lower().endswith("chatgpt.exe")
+            if kernel32.QueryFullProcessImageNameW(process, 0, path, ctypes.byref(length)):
+                if "OpenAI.Codex_" in path.value and path.value.lower().endswith("chatgpt.exe"):
+                    handles.append(hwnd)
         finally:
-            kernel32.CloseHandle(handle)
-        return not found
+            kernel32.CloseHandle(process)
+        return True
 
     user32.EnumWindows(visit, 0)
-    return found
+    return handles
+
+
+def find_pet():
+    for hwnd in pet_window_handles():
+        try:
+            root = auto.ControlFromHandle(hwnd)
+            images = []
+            for control, _ in auto.WalkControl(root, maxDepth=40):
+                if control.ControlTypeName == "ImageControl":
+                    rect = control.BoundingRectangle
+                    width, height = rect.right - rect.left, rect.bottom - rect.top
+                    if width >= 60 and height >= 60 and not control.IsOffscreen:
+                        images.append((width * height, control))
+            if images:
+                return hwnd, max(images, key=lambda item: item[0])[1]
+        except Exception:
+            continue
+    return None, None
 
 
 def codex_executable():
@@ -65,7 +89,6 @@ def codex_executable():
 
 
 def read_limits():
-    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     proc = subprocess.Popen(
         [codex_executable(), "app-server"],
         stdin=subprocess.PIPE,
@@ -74,7 +97,7 @@ def read_limits():
         text=True,
         encoding="utf-8",
         bufsize=1,
-        creationflags=flags,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     incoming = queue.Queue()
 
@@ -108,7 +131,7 @@ def read_limits():
     try:
         deadline = time.monotonic() + 25
         send({"method": "initialize", "id": 1, "params": {"clientInfo": {
-            "name": "codex_quota_float", "title": "Codex 额度速览", "version": "1.0.0"}}})
+            "name": "codex_quota_float", "title": "Codex 额度速览", "version": "2.0.0"}}})
         response(1, deadline)
         send({"method": "initialized", "params": {}})
         send({"method": "account/rateLimits/read", "id": 2})
@@ -127,10 +150,10 @@ def extract_snapshot(result):
         buckets = {"codex": result["rateLimits"]}
     windows = [window for bucket in buckets.values() for window in
                (bucket.get("primary"), bucket.get("secondary")) if window]
-    primary = next((w for w in windows if w.get("windowDurationMins") == 300), None)
-    secondary = next((w for w in windows if w.get("windowDurationMins") == 10080), None)
-    reset_credits = result.get("rateLimitResetCredits") or {}
-    return primary, secondary, reset_credits.get("availableCount")
+    five_hours = next((w for w in windows if w.get("windowDurationMins") == 300), None)
+    week = next((w for w in windows if w.get("windowDurationMins") == 10080), None)
+    cards = (result.get("rateLimitResetCredits") or {}).get("availableCount")
+    return five_hours, week, cards
 
 
 def remaining(window):
@@ -141,16 +164,29 @@ def remaining(window):
 
 def countdown(window):
     if not window or window.get("resetsAt") is None:
-        return "重置时间未知"
+        return "未知"
     seconds = max(0, int(window["resetsAt"] - time.time()))
     days, rest = divmod(seconds, 86400)
     hours, rest = divmod(rest, 3600)
     minutes = rest // 60
     if days:
-        return f"{days}天 {hours}小时后重置"
+        return f"{days}天 {hours}小时"
     if hours:
-        return f"{hours}小时 {minutes}分钟后重置"
-    return f"{minutes}分钟后重置"
+        return f"{hours}小时 {minutes}分钟"
+    return f"{minutes}分钟"
+
+
+def position_above_pet(rect):
+    virtual_x = user32.GetSystemMetrics(76)
+    virtual_y = user32.GetSystemMetrics(77)
+    virtual_right = virtual_x + user32.GetSystemMetrics(78)
+    virtual_bottom = virtual_y + user32.GetSystemMetrics(79)
+    x = (rect.left + rect.right - WIDTH) // 2
+    x = min(max(x, virtual_x + 6), virtual_right - WIDTH - 6)
+    y = rect.top - HEIGHT - 10
+    if y < virtual_y + 6:
+        y = min(rect.bottom + 10, virtual_bottom - HEIGHT - 6)
+    return int(x), int(y)
 
 
 class QuotaFloat:
@@ -159,112 +195,66 @@ class QuotaFloat:
         self.root.title("Codex 额度速览")
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
-        self.root.configure(bg=BG)
-        self.root.geometry(self.load_position())
+        self.root.wm_attributes("-transparentcolor", KEY)
+        self.root.configure(bg=KEY)
+        self.root.geometry(f"{WIDTH}x{HEIGHT}+0+0")
         self.root.withdraw()
-        self.was_open = False
-        self.dismissed = False
+        self.canvas = tk.Canvas(self.root, width=WIDTH, height=HEIGHT, bg=KEY,
+                                highlightthickness=0, bd=0)
+        self.canvas.pack()
+        self.canvas.bind("<Button-3>", self.show_menu)
+        self.menu = tk.Menu(self.root, tearoff=False)
+        self.pet_hwnd = None
+        self.pet_image = None
+        self.next_search = 0
         self.refreshing = False
         self.last_refresh = 0
-        self.snapshot = (None, None, None)
         self.messages = queue.Queue()
-        self.drag_origin = None
-        self.build()
-        self.root.after(200, self.tick)
+        self.snapshot = (None, None, None)
+        self.visible = False
+        self.draw()
+        self.root.after(100, self.tick)
 
-    def load_position(self):
-        try:
-            position = json.loads(POSITION_FILE.read_text(encoding="utf-8"))
-            x, y = int(position["x"]), int(position["y"])
-        except (OSError, ValueError, KeyError):
-            x, y = self.root.winfo_screenwidth() - WIDTH - 28, 70
-        return f"{WIDTH}x{HEIGHT}+{max(0, x)}+{max(0, y)}"
+    def rounded_box(self, x1, y1, x2, y2, radius, color):
+        c = self.canvas
+        c.create_rectangle(x1 + radius, y1, x2 - radius, y2, fill=color, outline="")
+        c.create_rectangle(x1, y1 + radius, x2, y2 - radius, fill=color, outline="")
+        for x in (x1, x2 - 2 * radius):
+            for y in (y1, y2 - 2 * radius):
+                c.create_oval(x, y, x + 2 * radius, y + 2 * radius, fill=color, outline="")
 
-    def save_position(self):
-        APP_DIR.mkdir(parents=True, exist_ok=True)
-        POSITION_FILE.write_text(json.dumps({"x": self.root.winfo_x(), "y": self.root.winfo_y()}), encoding="utf-8")
+    def draw(self):
+        c = self.canvas
+        c.delete("all")
+        self.rounded_box(0, 0, WIDTH, HEIGHT, 15, BORDER)
+        self.rounded_box(1, 1, WIDTH - 1, HEIGHT - 1, 14, BG)
+        for index, (label, color, y) in enumerate((("5小时", CYAN, 21), ("一周", AMBER, 51))):
+            value = remaining(self.snapshot[index])
+            c.create_text(14, y, text=label, anchor="w", fill=TEXT,
+                          font=("Microsoft YaHei UI", 9))
+            c.create_line(63, y, 171, y, fill=TRACK, width=5, capstyle="round")
+            if value is not None and value > 0:
+                c.create_line(63, y, 63 + 108 * value / 100, y,
+                              fill=color, width=5, capstyle="round")
+            text = "--" if value is None else f"{value:g}%"
+            c.create_text(221, y, text=text, anchor="e", fill=color,
+                          font=("Microsoft YaHei UI", 9, "bold"))
 
-    def label(self, parent, text, size=10, color=TEXT, weight="normal", **kwargs):
-        return tk.Label(parent, text=text, bg=parent["bg"], fg=color,
-                        font=("Microsoft YaHei UI", size, weight), **kwargs)
-
-    def build(self):
-        header = tk.Frame(self.root, bg=BG, height=46)
-        header.pack(fill="x", padx=16, pady=(9, 2))
-        header.pack_propagate(False)
-        title = self.label(header, "◉  CODEX  额度速览", 12, TEXT, "bold")
-        title.pack(side="left", pady=8)
-        close = self.label(header, "×", 17, MUTED, cursor="hand2")
-        close.pack(side="right", padx=(8, 0), pady=3)
-        close.bind("<Button-1>", self.dismiss)
-        for widget in (header, title):
-            widget.bind("<ButtonPress-1>", self.drag_start)
-            widget.bind("<B1-Motion>", self.drag_move)
-            widget.bind("<ButtonRelease-1>", lambda _: self.save_position())
-
-        self.cards = []
-        for caption, color in (("5 小时额度", CYAN), ("一周额度", AMBER)):
-            card = tk.Frame(self.root, bg=CARD, height=86)
-            card.pack(fill="x", padx=14, pady=(0, 7))
-            card.pack_propagate(False)
-            row = tk.Frame(card, bg=CARD)
-            row.pack(fill="x", padx=13, pady=(9, 0))
-            self.label(row, caption, 10, MUTED).pack(side="left")
-            percent = self.label(row, "--%", 17, color, "bold")
-            percent.pack(side="right")
-            bar = tk.Canvas(card, bg=CARD, highlightthickness=0, height=7)
-            bar.pack(fill="x", padx=13, pady=(6, 0))
-            detail = self.label(card, "等待读取", 9, MUTED, anchor="w")
-            detail.pack(fill="x", padx=13, pady=(3, 0))
-            self.cards.append((percent, bar, detail, color))
-            bar.bind("<Configure>", lambda _, index=len(self.cards)-1: self.draw_bar(index))
-
-        lower = tk.Frame(self.root, bg=CARD, height=42)
-        lower.pack(fill="x", padx=14, pady=(0, 6))
-        lower.pack_propagate(False)
-        self.label(lower, "可用重置卡", 10, MUTED).pack(side="left", padx=13)
-        self.credits = self.label(lower, "-- 次", 15, TEXT, "bold")
-        self.credits.pack(side="right", padx=13)
-        for widget in lower.winfo_children():
-            widget.pack_configure(pady=7)
-
-        footer = tk.Frame(self.root, bg=BG)
-        footer.pack(fill="x", padx=16)
-        self.status = self.label(footer, "打开 Codex 后读取额度", 8, MUTED, anchor="w")
-        self.status.pack(side="left")
-        refresh = self.label(footer, "↻ 刷新", 9, CYAN, cursor="hand2")
-        refresh.pack(side="right")
-        refresh.bind("<Button-1>", lambda _: self.refresh())
-        menu = tk.Menu(self.root, tearoff=False)
-        menu.add_command(label="立即刷新", command=self.refresh)
-        menu.add_command(label="退出悬浮窗", command=self.root.destroy)
-        self.root.bind("<Button-3>", lambda event: menu.tk_popup(event.x_root, event.y_root))
-
-    def drag_start(self, event):
-        self.drag_origin = (event.x_root - self.root.winfo_x(), event.y_root - self.root.winfo_y())
-
-    def drag_move(self, event):
-        if self.drag_origin:
-            self.root.geometry(f"+{event.x_root-self.drag_origin[0]}+{event.y_root-self.drag_origin[1]}")
-
-    def dismiss(self, _):
-        self.dismissed = True
-        self.root.withdraw()
-
-    def draw_bar(self, index):
-        _, bar, _, color = self.cards[index]
-        bar.delete("all")
-        width = max(1, bar.winfo_width())
-        bar.create_rectangle(0, 0, width, 7, fill="#344052", outline="")
-        value = remaining(self.snapshot[index])
-        if value is not None:
-            bar.create_rectangle(0, 0, width * value / 100, 7, fill=color, outline="")
+    def show_menu(self, event):
+        self.menu.delete(0, "end")
+        self.menu.add_command(label=f"5小时额度重置：{countdown(self.snapshot[0])}", state="disabled")
+        self.menu.add_command(label=f"一周额度重置：{countdown(self.snapshot[1])}", state="disabled")
+        cards = self.snapshot[2]
+        self.menu.add_command(label=f"可用重置卡：{'--' if cards is None else cards} 次", state="disabled")
+        self.menu.add_separator()
+        self.menu.add_command(label="立即刷新", command=self.refresh)
+        self.menu.add_command(label="退出悬浮窗", command=self.root.destroy)
+        self.menu.tk_popup(event.x_root, event.y_root)
 
     def refresh(self):
-        if self.refreshing or not self.was_open:
+        if self.refreshing or not self.visible:
             return
         self.refreshing = True
-        self.status.configure(text="正在读取额度…", fg=MUTED)
 
         def worker():
             try:
@@ -274,16 +264,40 @@ class QuotaFloat:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def pet_rect(self):
+        if self.pet_image is not None and user32.IsWindowVisible(self.pet_hwnd):
+            try:
+                rect = self.pet_image.BoundingRectangle
+                if not self.pet_image.IsOffscreen and rect.right - rect.left >= 60:
+                    return rect
+            except Exception:
+                pass
+        self.pet_hwnd = self.pet_image = None
+        if time.monotonic() < self.next_search:
+            return None
+        self.next_search = time.monotonic() + 1.5
+        self.pet_hwnd, self.pet_image = find_pet()
+        if self.pet_image is not None:
+            return self.pet_image.BoundingRectangle
+        return None
+
     def tick(self):
-        is_open = codex_window_open()
-        if is_open and not self.was_open:
-            self.dismissed = False
-            self.root.deiconify()
-            self.root.lift()
-        elif not is_open and self.was_open:
-            self.root.withdraw()
-        self.was_open = is_open
-        if is_open and not self.dismissed and time.monotonic() - self.last_refresh >= 60:
+        rect = self.pet_rect()
+        if rect is None:
+            if self.visible:
+                self.root.withdraw()
+                self.visible = False
+        else:
+            x, y = position_above_pet(rect)
+            if not self.visible:
+                self.root.geometry(f"{WIDTH}x{HEIGHT}+{x}+{y}")
+                self.root.deiconify()
+                self.root.lift()
+                self.visible = True
+            elif (self.root.winfo_x(), self.root.winfo_y()) != (x, y):
+                self.root.geometry(f"+{x}+{y}")
+                self.root.lift()
+        if self.visible and time.monotonic() - self.last_refresh >= REFRESH_SECONDS:
             self.refresh()
         try:
             while True:
@@ -292,30 +306,22 @@ class QuotaFloat:
                 self.last_refresh = time.monotonic()
                 if success:
                     self.snapshot = value
-                    count = value[2]
-                    self.credits.configure(text="-- 次" if count is None else f"{count} 次")
-                    self.status.configure(text="更新于 " + datetime.now().strftime("%H:%M:%S"), fg=MUTED)
-                else:
-                    self.status.configure(text=str(value)[:39], fg=AMBER)
+                    self.draw()
         except queue.Empty:
             pass
-        for index, (percent, _, detail, _) in enumerate(self.cards):
-            window = self.snapshot[index]
-            value = remaining(window)
-            percent.configure(text="--%" if value is None else f"{value:g}%")
-            detail.configure(text=countdown(window))
-            self.draw_bar(index)
-        self.root.after(1000, self.tick)
+        self.root.after(120, self.tick)
 
 
 def main():
-    mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "Local\\CodexQuotaFloat")
-    if ctypes.windll.kernel32.GetLastError() == 183:
+    user32.SetProcessDPIAware()
+    kernel32.CreateMutexW.restype = wintypes.HANDLE
+    mutex = kernel32.CreateMutexW(None, False, "Local\\CodexQuotaFloat")
+    if kernel32.GetLastError() == 183:
         return
     try:
         QuotaFloat().root.mainloop()
     finally:
-        ctypes.windll.kernel32.CloseHandle(mutex)
+        kernel32.CloseHandle(mutex)
 
 
 if __name__ == "__main__":

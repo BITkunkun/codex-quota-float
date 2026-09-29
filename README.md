@@ -24,9 +24,9 @@
    powershell -ExecutionPolicy Bypass -File .\install.ps1
    ```
 
-安装脚本会替换当前用户的安装文件、删除旧版留下的自由拖动位置记录，并启动一个隐藏的后台监视器。它在当前用户的 Windows“启动”文件夹中创建快捷方式；以后登录 Windows 后会继续运行。重启 Codex 或用量条进程意外退出时，监视器会在 Codex 再次运行后自动启动用量条。
+安装脚本会替换当前用户的安装文件、删除旧版留下的自由拖动位置记录，并注册当前用户的 Windows 登录计划任务。计划任务独立于 Codex 进程运行；以后登录 Windows 时会自动启动监视器。单独重启 Codex 或用量条进程意外退出时，监视器会自动启动用量条，无需手动运行 EXE。
 
-安装位置：`%LOCALAPPDATA%\CodexQuotaFloat`。如果宠物尚未显示，可在 Codex 中输入 `/pet`，或在 **设置 → Pets** 中显示宠物。选择 **Mini** 时没有宠物图像，用量条也不会出现。
+安装位置：`%USERPROFILE%\CodexQuotaFloat`。旧版的 `%LOCALAPPDATA%\CodexQuotaFloat` 可能受到 Windows 文件加密保护，导致独立的计划任务无法读取；升级时安装脚本会停用旧监视器。如果宠物尚未显示，可在 Codex 中输入 `/pet`，或在 **设置 → Pets** 中显示宠物。选择 **Mini** 时没有宠物图像，用量条也不会出现。
 
 ## 工作方式与隐私
 
@@ -45,7 +45,7 @@
 powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
 ```
 
-脚本会退出用量条和后台监视器、移除启动快捷方式，并删除当前用户安装的文件。
+脚本会退出用量条和后台监视器、移除计划任务与旧版启动快捷方式，并删除当前用户安装的文件。
 
 ## 从源码运行或构建
 
